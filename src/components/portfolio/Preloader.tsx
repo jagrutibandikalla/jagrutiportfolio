@@ -1,24 +1,114 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { media } from "@/lib/media";
 
 const easeLux = [0.16, 1, 0.3, 1] as const;
 
 export function Preloader({ onDone }: { onDone: () => void }) {
   const [progress, setProgress] = useState(0);
+  const [statusText, setStatusText] = useState("Initializing Core...");
   const [exiting, setExiting] = useState(false);
 
+  const targetProgressRef = useRef(15);
+  const animationFrameRef = useRef<number | null>(null);
+
   useEffect(() => {
-    let value = 0;
-    const tick = window.setInterval(() => {
-      value = Math.min(100, value + Math.random() * 9 + 4);
-      setProgress(Math.floor(value));
-      if (value >= 100) {
-        window.clearInterval(tick);
-        window.setTimeout(() => setExiting(true), 420);
-        window.setTimeout(onDone, 1500);
+    let isCancelled = false;
+    let currentWeight = 15;
+
+    const weights = {
+      dom: 20,
+      fonts: 20,
+      profileImage: 30,
+      windowLoad: 15,
+    };
+
+    const updateTarget = (addWeight: number, status: string) => {
+      if (isCancelled) return;
+      currentWeight = Math.min(100, currentWeight + addWeight);
+      targetProgressRef.current = currentWeight;
+      setStatusText(status);
+    };
+
+    // 1. DOM Interactive Check
+    if (document.readyState === "interactive" || document.readyState === "complete") {
+      updateTarget(weights.dom, "DOM Interactive...");
+    } else {
+      const handleDom = () => updateTarget(weights.dom, "DOM Ready...");
+      document.addEventListener("DOMContentLoaded", handleDom, { once: true });
+    }
+
+    // 2. Fonts Ready Check
+    if ("fonts" in document) {
+      document.fonts.ready
+        .then(() => {
+          updateTarget(weights.fonts, "Fonts Loaded...");
+        })
+        .catch(() => {
+          updateTarget(weights.fonts, "Fonts Ready...");
+        });
+    } else {
+      updateTarget(weights.fonts, "Fonts Ready...");
+    }
+
+    // 3. Preload Profile Image
+    const img = new Image();
+    img.src = media.profilePhoto;
+    const onImgLoad = () => updateTarget(weights.profileImage, "Media Loaded...");
+    img.onload = onImgLoad;
+    img.onerror = () => {
+      const fallbackImg = new Image();
+      fallbackImg.src = media.profilePhotoFallback;
+      fallbackImg.onload = onImgLoad;
+      fallbackImg.onerror = onImgLoad;
+    };
+
+    // 4. Window / Full Page Load Check
+    if (document.readyState === "complete") {
+      updateTarget(weights.windowLoad, "Portfolio Ready...");
+    } else {
+      const handleLoad = () => updateTarget(weights.windowLoad, "Portfolio Ready...");
+      window.addEventListener("load", handleLoad, { once: true });
+    }
+
+    // Safety timeout to guarantee complete state within 2.2 seconds
+    const safetyTimer = setTimeout(() => {
+      updateTarget(100, "Ready");
+    }, 2200);
+
+    // Smooth animation loop to interpolate displayed progress to targetProgressRef.current
+    let displayProgress = 0;
+    const animate = () => {
+      if (isCancelled) return;
+
+      const target = targetProgressRef.current;
+      if (displayProgress < target) {
+        const diff = target - displayProgress;
+        const step = Math.max(0.7, diff * 0.14);
+        displayProgress = Math.min(target, displayProgress + step);
+        setProgress(Math.floor(displayProgress));
       }
-    }, 110);
-    return () => window.clearInterval(tick);
+
+      if (displayProgress >= 100) {
+        setProgress(100);
+        setStatusText("Welcome");
+        setTimeout(() => setExiting(true), 350);
+        setTimeout(onDone, 1200);
+        return;
+      }
+
+      animationFrameRef.current = requestAnimationFrame(animate);
+    };
+
+    animationFrameRef.current = requestAnimationFrame(animate);
+
+    return () => {
+      isCancelled = true;
+      clearTimeout(safetyTimer);
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+    };
   }, [onDone]);
 
   return (
@@ -54,9 +144,9 @@ export function Preloader({ onDone }: { onDone: () => void }) {
           />
         </motion.svg>
 
-        {/* monogram */}
+        {/* monogram & progress */}
         <motion.div
-          className="relative flex flex-col items-center gap-8"
+          className="relative flex flex-col items-center gap-6"
           animate={exiting ? { opacity: 0, y: -30, filter: "blur(12px)" } : {}}
           transition={{ duration: 0.7, ease: easeLux }}
         >
@@ -92,15 +182,20 @@ export function Preloader({ onDone }: { onDone: () => void }) {
             <span className="eyebrow">percent</span>
           </div>
 
-          <div className="h-px w-56 overflow-hidden bg-border sm:w-80">
+          <div className="relative h-[2px] w-56 overflow-hidden bg-border/40 sm:w-80 rounded-full">
             <motion.div
-              className="h-full bg-primary"
+              className="h-full bg-gradient-to-r from-primary to-accent shadow-[0_0_12px_rgba(168,85,247,0.5)]"
               style={{ width: `${progress}%` }}
               transition={{ ease: "linear" }}
             />
           </div>
 
-          <p className="eyebrow">Jagruti Bandikalla — Portfolio</p>
+          <div className="flex flex-col items-center gap-1">
+            <span className="text-xs font-mono tracking-widest text-muted-foreground uppercase transition-all duration-300">
+              {statusText}
+            </span>
+            <p className="eyebrow">Jagruti Bandikalla — Portfolio</p>
+          </div>
         </motion.div>
 
         {/* curtain reveal */}
@@ -124,3 +219,4 @@ export function Preloader({ onDone }: { onDone: () => void }) {
     </AnimatePresence>
   );
 }
+
